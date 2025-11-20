@@ -1,22 +1,89 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { MetricCard } from "@/components/MetricCard";
 import { PeriodFilter, Period } from "@/components/PeriodFilter";
 import { DollarSign, TrendingUp, TrendingDown, Wallet, Package, BarChart3, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getResumoFinanceiro, getResumoEstoque } from "@/lib/database";
+import { format, subDays, subMonths, subYears, startOfDay } from "date-fns";
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("month");
+  const [loading, setLoading] = useState(true);
+  const [metrics, setMetrics] = useState({
+    faturamento: 0,
+    ganhos: 0,
+    gastos: 0,
+    lucro: 0,
+    estoqueBarris: 0,
+    estoqueLitros: 0,
+    vendidoBarris: 0,
+    vendidoLitros: 0,
+  });
 
-  // Mock data - será substituído por dados reais
-  const metrics = {
-    faturamento: "R$ 45.800,00",
-    ganhos: "R$ 42.300,00",
-    gastos: "R$ 15.600,00",
-    lucro: "R$ 26.700,00",
-    estoqueBarris: 24,
-    estoqueLitros: 720,
-    vendidoBarris: 56,
-    vendidoLitros: 1680,
+  const getPeriodoDatas = (period: Period) => {
+    const hoje = new Date();
+    let inicio = new Date();
+
+    switch (period) {
+      case "today":
+        inicio = startOfDay(hoje);
+        break;
+      case "week":
+        inicio = subDays(hoje, 7);
+        break;
+      case "month":
+        inicio = subMonths(hoje, 1);
+        break;
+      case "year":
+        inicio = subYears(hoje, 1);
+        break;
+      default:
+        inicio = subMonths(hoje, 1);
+    }
+
+    return {
+      inicio: format(inicio, "yyyy-MM-dd"),
+      fim: format(hoje, "yyyy-MM-dd"),
+    };
+  };
+
+  useEffect(() => {
+    const carregarDados = async () => {
+      setLoading(true);
+      try {
+        const periodo = getPeriodoDatas(selectedPeriod);
+        const [resumoFinanceiro, resumoEstoque] = await Promise.all([
+          getResumoFinanceiro(periodo),
+          getResumoEstoque(),
+        ]);
+
+        setMetrics({
+          faturamento: resumoFinanceiro.faturamento,
+          ganhos: resumoFinanceiro.ganhos,
+          gastos: resumoFinanceiro.gastos,
+          lucro: resumoFinanceiro.lucro,
+          estoqueBarris: resumoEstoque.barrisEmEstoque,
+          estoqueLitros: resumoEstoque.litrosEmEstoque,
+          vendidoBarris: resumoFinanceiro.barrisVendidos,
+          vendidoLitros: resumoFinanceiro.litrosVendidos,
+        });
+      } catch (error) {
+        console.error("Erro ao carregar dados do dashboard:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    carregarDados();
+  }, [selectedPeriod]);
+
+  const formatarMoeda = (valor: number) => {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    }).format(valor);
   };
 
   return (
@@ -34,24 +101,24 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Faturamento Bruto"
-          value={metrics.faturamento}
+          value={loading ? "..." : formatarMoeda(metrics.faturamento)}
           icon={DollarSign}
           variant="golden"
         />
         <MetricCard
           title="Total em Ganhos"
-          value={metrics.ganhos}
+          value={loading ? "..." : formatarMoeda(metrics.ganhos)}
           icon={TrendingUp}
           variant="primary"
         />
         <MetricCard
           title="Total em Gastos"
-          value={metrics.gastos}
+          value={loading ? "..." : formatarMoeda(metrics.gastos)}
           icon={TrendingDown}
         />
         <MetricCard
           title="Lucro do Período"
-          value={metrics.lucro}
+          value={loading ? "..." : formatarMoeda(metrics.lucro)}
           icon={Wallet}
           variant="golden"
         />
@@ -63,26 +130,26 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <MetricCard
             title="Barris em Estoque"
-            value={metrics.estoqueBarris}
+            value={loading ? "..." : Math.round(metrics.estoqueBarris)}
             icon={Package}
             subtitle="unidades"
           />
           <MetricCard
             title="Litros em Estoque"
-            value={metrics.estoqueLitros}
+            value={loading ? "..." : Math.round(metrics.estoqueLitros)}
             icon={Package}
             subtitle="litros totais"
           />
           <MetricCard
             title="Barris Vendidos"
-            value={metrics.vendidoBarris}
+            value={loading ? "..." : Math.round(metrics.vendidoBarris)}
             icon={BarChart3}
             subtitle="no período"
             variant="primary"
           />
           <MetricCard
             title="Litros Vendidos"
-            value={metrics.vendidoLitros}
+            value={loading ? "..." : Math.round(metrics.vendidoLitros)}
             icon={BarChart3}
             subtitle="no período"
             variant="primary"
@@ -96,6 +163,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Button
             size="lg"
+            onClick={() => navigate("/financeiro")}
             className="h-20 bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Plus className="mr-2 h-5 w-5" />
@@ -104,6 +172,7 @@ export default function Dashboard() {
           <Button
             size="lg"
             variant="outline"
+            onClick={() => navigate("/financeiro")}
             className="h-20 border-primary/50 hover:bg-primary/10"
           >
             <Plus className="mr-2 h-5 w-5" />
@@ -112,6 +181,7 @@ export default function Dashboard() {
           <Button
             size="lg"
             variant="outline"
+            onClick={() => navigate("/notas")}
             className="h-20 border-accent/50 hover:bg-accent/10"
           >
             <Plus className="mr-2 h-5 w-5" />

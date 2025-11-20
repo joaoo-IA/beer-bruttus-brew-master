@@ -1,82 +1,131 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, TrendingUp, TrendingDown, Trash2 } from "lucide-react";
 import { PeriodFilter, Period } from "@/components/PeriodFilter";
 import { toast } from "@/hooks/use-toast";
-
-type Transaction = {
-  id: string;
-  type: "ganho" | "gasto";
-  produto?: string;
-  categoria?: string;
-  valor: number;
-  quantidade?: number;
-  data: string;
-  descricao?: string;
-};
+import { criarTransacao, excluirTransacao, getResumoFinanceiro } from "@/lib/database";
+import { useTransacoes } from "@/hooks/useDatabase";
+import { useProdutos } from "@/hooks/useDatabase";
+import { format, subDays, subMonths, subYears, startOfDay } from "date-fns";
 
 export default function Financeiro() {
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("month");
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [ganhoOpen, setGanhoOpen] = useState(false);
   const [gastoOpen, setGastoOpen] = useState(false);
+  const [totais, setTotais] = useState({ ganhos: 0, gastos: 0 });
+  const [produtoSelecionado, setProdutoSelecionado] = useState("");
 
-  const handleAddGanho = (e: React.FormEvent<HTMLFormElement>) => {
+  const getPeriodoDatas = (period: Period) => {
+    const hoje = new Date();
+    let inicio = new Date();
+
+    switch (period) {
+      case "today":
+        inicio = startOfDay(hoje);
+        break;
+      case "week":
+        inicio = subDays(hoje, 7);
+        break;
+      case "month":
+        inicio = subMonths(hoje, 1);
+        break;
+      case "year":
+        inicio = subYears(hoje, 1);
+        break;
+      default:
+        inicio = subMonths(hoje, 1);
+    }
+
+    return {
+      inicio: format(inicio, "yyyy-MM-dd"),
+      fim: format(hoje, "yyyy-MM-dd"),
+    };
+  };
+
+  const periodo = getPeriodoDatas(selectedPeriod);
+  const { transacoes, refetch } = useTransacoes(periodo);
+  const { produtos } = useProdutos();
+
+  useEffect(() => {
+    const carregarTotais = async () => {
+      const resumo = await getResumoFinanceiro(periodo);
+      setTotais({ ganhos: resumo.ganhos, gastos: resumo.gastos });
+    };
+    carregarTotais();
+  }, [selectedPeriod, transacoes]);
+
+  const handleAddGanho = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      type: "ganho",
-      produto: formData.get("produto") as string,
-      quantidade: Number(formData.get("quantidade")),
-      valor: Number(formData.get("valor")),
-      data: formData.get("data") as string,
-      descricao: formData.get("observacoes") as string,
-    };
 
-    setTransactions([newTransaction, ...transactions]);
-    setGanhoOpen(false);
-    toast({ title: "Ganho registrado com sucesso!" });
-    e.currentTarget.reset();
+    try {
+      await criarTransacao({
+        tipo: "ganho",
+        produto_id: produtoSelecionado || undefined,
+        categoria: "Venda",
+        quantidade: Number(formData.get("quantidade")),
+        valor: Number(formData.get("valor")),
+        data: formData.get("data") as string,
+        descricao: formData.get("observacoes") as string || undefined,
+      });
+
+      toast({ title: "Ganho registrado com sucesso!" });
+      setGanhoOpen(false);
+      setProdutoSelecionado("");
+      refetch();
+      e.currentTarget.reset();
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Erro ao registrar ganho", variant: "destructive" });
+    }
   };
 
-  const handleAddGasto = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddGasto = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
-    const newTransaction: Transaction = {
-      id: Date.now().toString(),
-      type: "gasto",
-      categoria: formData.get("categoria") as string,
-      valor: Number(formData.get("valor")),
-      data: formData.get("data") as string,
-      descricao: formData.get("descricao") as string,
-    };
 
-    setTransactions([newTransaction, ...transactions]);
-    setGastoOpen(false);
-    toast({ title: "Gasto registrado com sucesso!" });
-    e.currentTarget.reset();
+    try {
+      await criarTransacao({
+        tipo: "gasto",
+        categoria: formData.get("categoria") as string,
+        valor: Number(formData.get("valor")),
+        data: formData.get("data") as string,
+        descricao: formData.get("descricao") as string || undefined,
+      });
+
+      toast({ title: "Gasto registrado com sucesso!" });
+      setGastoOpen(false);
+      refetch();
+      e.currentTarget.reset();
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Erro ao registrar gasto", variant: "destructive" });
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setTransactions(transactions.filter(t => t.id !== id));
-    toast({ title: "Registro excluído" });
+  const handleDelete = async (id: string) => {
+    try {
+      await excluirTransacao(id);
+      toast({ title: "Registro excluído" });
+      refetch();
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Erro ao excluir registro", variant: "destructive" });
+    }
   };
 
-  const totalGanhos = transactions
-    .filter(t => t.type === "ganho")
-    .reduce((sum, t) => sum + t.valor, 0);
-
-  const totalGastos = transactions
-    .filter(t => t.type === "gasto")
-    .reduce((sum, t) => sum + t.valor, 0);
+  const formatarMoeda = (valor: number) => {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    }).format(valor);
+  };
 
   return (
     <div className="space-y-8">
@@ -110,13 +159,31 @@ export default function Financeiro() {
                 </DialogHeader>
                 <form onSubmit={handleAddGanho} className="space-y-4">
                   <div>
-                    <Label htmlFor="produto">Produto</Label>
-                    <Input id="produto" name="produto" required className="bg-background/50" />
+                    <Label htmlFor="produto_id">Produto</Label>
+                    <Select value={produtoSelecionado} onValueChange={setProdutoSelecionado} required>
+                      <SelectTrigger className="bg-background/50">
+                        <SelectValue placeholder="Selecione um produto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {produtos.map((produto) => (
+                          <SelectItem key={produto.id} value={produto.id}>
+                            {produto.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="quantidade">Quantidade</Label>
-                      <Input id="quantidade" name="quantidade" type="number" step="0.01" required className="bg-background/50" />
+                      <Input
+                        id="quantidade"
+                        name="quantidade"
+                        type="number"
+                        step="0.01"
+                        required
+                        className="bg-background/50"
+                      />
                     </div>
                     <div>
                       <Label htmlFor="valor">Valor (R$)</Label>
@@ -125,7 +192,14 @@ export default function Financeiro() {
                   </div>
                   <div>
                     <Label htmlFor="data">Data</Label>
-                    <Input id="data" name="data" type="date" required className="bg-background/50" />
+                    <Input
+                      id="data"
+                      name="data"
+                      type="date"
+                      required
+                      defaultValue={format(new Date(), "yyyy-MM-dd")}
+                      className="bg-background/50"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="observacoes">Observações</Label>
@@ -138,7 +212,7 @@ export default function Financeiro() {
               </DialogContent>
             </Dialog>
             <div className="mt-4 text-sm">
-              <p className="text-primary font-semibold">Total: R$ {totalGanhos.toFixed(2)}</p>
+              <p className="text-primary font-semibold">Total: {formatarMoeda(totais.ganhos)}</p>
             </div>
           </CardContent>
         </Card>
@@ -165,15 +239,35 @@ export default function Financeiro() {
                 <form onSubmit={handleAddGasto} className="space-y-4">
                   <div>
                     <Label htmlFor="categoria">Categoria</Label>
-                    <Input id="categoria" name="categoria" placeholder="Ex: Matéria-prima, Gás, Manutenção..." required className="bg-background/50" />
+                    <Input
+                      id="categoria"
+                      name="categoria"
+                      placeholder="Ex: Matéria-prima, Gás, Manutenção..."
+                      required
+                      className="bg-background/50"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="valor-gasto">Valor (R$)</Label>
-                    <Input id="valor-gasto" name="valor" type="number" step="0.01" required className="bg-background/50" />
+                    <Input
+                      id="valor-gasto"
+                      name="valor"
+                      type="number"
+                      step="0.01"
+                      required
+                      className="bg-background/50"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="data-gasto">Data</Label>
-                    <Input id="data-gasto" name="data" type="date" required className="bg-background/50" />
+                    <Input
+                      id="data-gasto"
+                      name="data"
+                      type="date"
+                      required
+                      defaultValue={format(new Date(), "yyyy-MM-dd")}
+                      className="bg-background/50"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="descricao">Descrição</Label>
@@ -186,7 +280,7 @@ export default function Financeiro() {
               </DialogContent>
             </Dialog>
             <div className="mt-4 text-sm">
-              <p className="text-destructive font-semibold">Total: R$ {totalGastos.toFixed(2)}</p>
+              <p className="text-destructive font-semibold">Total: {formatarMoeda(totais.gastos)}</p>
             </div>
           </CardContent>
         </Card>
@@ -197,28 +291,30 @@ export default function Financeiro() {
           <CardTitle>Histórico</CardTitle>
         </CardHeader>
         <CardContent>
-          {transactions.length === 0 ? (
+          {transacoes.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">
               Nenhuma transação registrada no período selecionado
             </p>
           ) : (
             <div className="space-y-3">
-              {transactions.map((transaction) => (
+              {transacoes.map((transaction: any) => (
                 <div
                   key={transaction.id}
                   className={`flex items-center justify-between p-4 rounded-lg border ${
-                    transaction.type === "ganho" ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5"
+                    transaction.tipo === "ganho"
+                      ? "border-primary/30 bg-primary/5"
+                      : "border-destructive/30 bg-destructive/5"
                   }`}
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      {transaction.type === "ganho" ? (
+                      {transaction.tipo === "ganho" ? (
                         <TrendingUp className="h-4 w-4 text-primary" />
                       ) : (
                         <TrendingDown className="h-4 w-4 text-destructive" />
                       )}
                       <span className="font-semibold text-foreground">
-                        {transaction.produto || transaction.categoria}
+                        {transaction.produtos?.nome || transaction.categoria}
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground">
@@ -228,10 +324,12 @@ export default function Financeiro() {
                     </p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className={`font-bold text-lg ${
-                      transaction.type === "ganho" ? "text-primary" : "text-destructive"
-                    }`}>
-                      R$ {transaction.valor.toFixed(2)}
+                    <span
+                      className={`font-bold text-lg ${
+                        transaction.tipo === "ganho" ? "text-primary" : "text-destructive"
+                      }`}
+                    >
+                      {formatarMoeda(transaction.valor)}
                     </span>
                     <Button
                       variant="ghost"
